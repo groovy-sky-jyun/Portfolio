@@ -1,2 +1,4 @@
 .claude/
 *.pdf
+_source/
+CLAUDE.md
