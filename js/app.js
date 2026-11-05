@@ -138,7 +138,19 @@ function renderProject(p) {
       <div class="features"><h2>주요 기능</h2><ul>${p.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></div>
     </section>
     ${groups}
-  </main>`;
+  </main>${renderRail(p)}`;
+}
+
+function renderRail(p) {
+  if (!p.groups.length) return "";
+  const labels = ["메인", ...p.groups.map((g) => g.title)];
+  const nodes = labels
+    .map(
+      (label, i) =>
+        `<button class="rail-node" type="button" data-index="${i}" style="--i:${i}" aria-label="${esc(label)} 위치로 이동"><span class="rail-ring"></span><span class="rail-text"><small>${String(i).padStart(2, "0")}</small>${esc(label)}</span></button>`
+    )
+    .join("");
+  return `<nav class="rail tone-${p.tone}" style="--count:${labels.length}" aria-label="페이지 안 이동"><div class="rail-line"><i></i></div>${nodes}<button class="rail-next" type="button" aria-label="다음 위치로 이동"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5.5l5 5 5-5" /></svg></button></nav>`;
 }
 
 function renderDetail(p, item) {
@@ -166,6 +178,75 @@ const videoObserver = new IntersectionObserver(
   { threshold: 0.35 }
 );
 
+// 프로젝트 화면의 위치 표시: 메인과 그룹마다 항목을 두고, 누르면 그 위치로 이동한다
+let rail = null;
+let railStops = [];
+let railActive = 0;
+
+function measureRail() {
+  const max = Math.floor(document.documentElement.scrollHeight - innerHeight);
+  const navHeight = app.querySelector(".site-nav").offsetHeight;
+  const tops = [...app.querySelectorAll(".group")].map((group) => Math.round(group.getBoundingClientRect().top + scrollY - navHeight));
+  railStops = [0, ...tops.map((top) => Math.min(top, max))];
+  // 페이지 끝에 걸려 위치가 겹치면 앞 항목을 당겨 모든 항목을 고를 수 있게 한다
+  for (let i = railStops.length - 2; i > 0; i--) railStops[i] = Math.min(railStops[i], railStops[i + 1] - 80);
+}
+
+function paintRail() {
+  if (!rail) return;
+  const last = railStops.length - 1;
+  let filled = last;
+  railActive = last;
+  for (let i = 0; i < last; i++) {
+    const from = railStops[i];
+    const to = railStops[i + 1];
+    if (scrollY < to) {
+      filled = i + Math.max(0, scrollY - from) / (to - from);
+      // 다음 그룹 제목이 화면 위쪽에 가까워지면 현재 항목을 넘긴다
+      railActive = scrollY >= to - Math.min(innerHeight * 0.3, (to - from) / 2) ? i + 1 : i;
+      break;
+    }
+  }
+  rail.querySelector(".rail-line i").style.transform = `scaleY(${filled / last})`;
+  rail.querySelectorAll(".rail-node").forEach((node, i) => {
+    node.classList.toggle("on", i === railActive);
+    node.classList.toggle("done", i < railActive);
+    if (i === railActive) node.setAttribute("aria-current", "location");
+    else node.removeAttribute("aria-current");
+  });
+  const atEnd = railActive === last;
+  const next = rail.querySelector(".rail-next");
+  next.classList.toggle("up", atEnd);
+  next.setAttribute("aria-label", atEnd ? "맨 위로 이동" : "다음 위치로 이동");
+}
+
+function goToRailStop(index) {
+  measureRail();
+  scrollTo({ top: railStops[index], behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
+
+function setupRail() {
+  rail = app.querySelector(".rail");
+  if (!rail) return;
+  rail.addEventListener("click", (event) => {
+    const node = event.target.closest(".rail-node");
+    if (node) goToRailStop(Number(node.dataset.index));
+    else if (event.target.closest(".rail-next")) goToRailStop(railActive === railStops.length - 1 ? 0 : railActive + 1);
+  });
+  measureRail();
+  paintRail();
+}
+
+function refreshRail() {
+  if (!rail) return;
+  measureRail();
+  paintRail();
+}
+
+addEventListener("scroll", paintRail, { passive: true });
+addEventListener("resize", refreshRail);
+new ResizeObserver(refreshRail).observe(document.body);
+
 function route() {
   const [, projectId, itemId] = location.hash.replace(/^#\/?/, "/").split("/");
   const project = projects.find((p) => p.id === projectId);
@@ -178,6 +259,7 @@ function route() {
   else app.innerHTML = renderHome();
   app.querySelectorAll("video[data-autoplay]").forEach((video) => videoObserver.observe(video));
   scrollTo(0, scrollMemory.get(routeKey) || 0);
+  setupRail();
   currentRoute = routeKey;
 
   const label = item ? item.title : project ? project.title : "포트폴리오";
